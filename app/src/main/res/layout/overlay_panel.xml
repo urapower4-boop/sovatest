@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="260dp"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="#E6000010"
+    android:padding="8dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="🦉 SovaTest"
+            android:textColor="#00FF88"
+            android:textSize="14sp"
+            android:textStyle="bold"/>
+
+        <Button
+            android:id="@+id/btnMin"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:text="—"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#333333"
+            android:padding="0dp"/>
+
+        <Button
+            android:id="@+id/btnClose"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="4dp"
+            android:text="×"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#AA0000"
+            android:padding="0dp"/>
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/btnToggle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="● СКАНУВАТИ"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#00AA55"/>
+
+    <ScrollView
+        android:id="@+id/logScroll"
+        android:layout_width="match_parent"
+        android:layout_height="180dp"
+        android:layout_marginTop="6dp"
+        android:background="#000000">
+
+        <TextView
+            android:id="@+id/log"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="[готовий]\n"
+            android:textColor="#00FF88"
+            android:textSize="11sp"
+            android:fontFamily="monospace"
+            android:padding="6dp"/>
+    </ScrollView>
+
+    <View
+        android:id="@+id/resizeHandle"
+        android:layout_width="match_parent"
+        android:layout_height="10dp"
+        android:layout_marginTop="4dp"
+        android:background="#222222"/>
+</LinearLayout>
