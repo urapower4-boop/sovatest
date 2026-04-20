@@ -1,9 +1,10 @@
 package com.sova.test
 
-import android.app.*
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
@@ -31,34 +32,26 @@ class ScreenCaptureService : Service() {
     private var projection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
-    private var width = 0
-    private var height = 0
-    private var density = 0
+    private var sw = 0
+    private var sh = 0
+    private var dpi = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         instance = this
-        startForegroundSafe()
-    }
-
-    private fun startForegroundSafe() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val ch = NotificationChannel(CH_ID, "SovaTest Capture", NotificationManager.IMPORTANCE_LOW)
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
         }
         val n = NotificationCompat.Builder(this, CH_ID)
             .setContentTitle("SovaTest")
-            .setContentText("Готовий сканувати")
+            .setContentText("Готова сканувати")
             .setSmallIcon(R.drawable.ic_owl)
             .setOngoing(true)
             .build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } else {
-            startForeground(NOTIF_ID, n)
-        }
+        startForeground(NOTIF_ID, n)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -76,22 +69,21 @@ class ScreenCaptureService : Service() {
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION") wm.defaultDisplay.getRealMetrics(metrics)
-        width = metrics.widthPixels
-        height = metrics.heightPixels
-        density = metrics.densityDpi
+        sw = metrics.widthPixels
+        sh = metrics.heightPixels
+        dpi = metrics.densityDpi
 
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        imageReader = ImageReader.newInstance(sw, sh, PixelFormat.RGBA_8888, 2)
         virtualDisplay = projection?.createVirtualDisplay(
-            "sova-cap", width, height, density,
+            "sova-cap", sw, sh, dpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             imageReader!!.surface, null, Handler(Looper.getMainLooper())
         )
     }
 
-    fun screenWidth(): Int = width
-    fun screenHeight(): Int = height
+    fun screenWidth(): Int = sw
+    fun screenHeight(): Int = sh
 
-    /** Захват одного кадра в Bitmap. В галерею не пишется — живёт только в памяти процесса. */
     fun grab(): Bitmap? {
         val reader = imageReader ?: return null
         var image: Image? = null
@@ -101,18 +93,17 @@ class ScreenCaptureService : Service() {
                 image = reader.acquireLatestImage()
                 if (image == null) Thread.sleep(30)
             }
-            image ?: return null
-            val plane = image.planes[0]
+            val img = image ?: return null
+            val plane = img.planes[0]
             val buffer = plane.buffer
             val pixelStride = plane.pixelStride
             val rowStride = plane.rowStride
-            val rowPadding = rowStride - pixelStride * width
+            val rowPadding = rowStride - pixelStride * sw
             val full = Bitmap.createBitmap(
-                width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888
+                sw + rowPadding / pixelStride, sh, Bitmap.Config.ARGB_8888
             )
             full.copyPixelsFromBuffer(buffer)
-            // Обрезаем паддинг справа
-            Bitmap.createBitmap(full, 0, 0, width, height)
+            Bitmap.createBitmap(full, 0, 0, sw, sh)
         } catch (e: Exception) {
             null
         } finally {
