@@ -33,26 +33,20 @@ class GeminiClient(private val apiKey: String) {
     )
 
     suspend fun analyze(screen: Bitmap): Result = withContext(Dispatchers.IO) {
-        val b64 = bitmapToBase64Jpeg(screen, quality = 80)
+        val b64 = bitmapToBase64Jpeg(screen, 80)
 
         val prompt = """
-Ти — асистент на онлайн-тесті українською мовою (всеосвіта, «На Урок», Google Forms).
-На скріншоті — питання тесту і варіанти відповідей.
+Ти — асистент на онлайн-тесті українською мовою.
+На скріншоті — питання і варіанти відповідей.
 
 Завдання:
 1. Визнач питання.
-2. Обери ПРАВИЛЬНИЙ варіант.
-3. Поверни bbox [x, y, width, height] у пікселях скріншота навколо тексту правильного варіанта. (0,0) — лівий верхній кут.
+2. Обери правильний варіант.
+3. Поверни bbox [x, y, width, height] у пікселях скріншота навколо тексту правильного варіанта.
 4. Коротке пояснення (1-3 речення).
 
-ВИДАЙ СТРОГО JSON, без ```json, без коментарів:
-{
-  "question": "текст",
-  "correct_index": 0,
-  "correct_text": "текст варіанта",
-  "bbox": [x, y, width, height],
-  "explanation": "пояснення"
-}
+Відповідай СТРОГО JSON без ```:
+{"question":"...","correct_index":0,"correct_text":"...","bbox":[x,y,w,h],"explanation":"..."}
 
 Якщо не знаєш координат — bbox: null.
 Якщо на скріні немає тесту — correct_index: -1, explanation: "no_test".
@@ -83,13 +77,7 @@ class GeminiClient(private val apiKey: String) {
         client.newCall(req).execute().use { resp ->
             val raw = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
-                return@withContext Result(
-                    question = "",
-                    correctIndex = -1,
-                    correctText = "",
-                    bbox = null,
-                    explanation = "HTTP ${resp.code}: ${raw.take(200)}"
-                )
+                return@withContext Result("", -1, "", null, "HTTP ${resp.code}")
             }
             parseGeminiResponse(raw)
         }
@@ -122,11 +110,11 @@ class GeminiClient(private val apiKey: String) {
             }
 
             Result(
-                question = j.optString("question", ""),
-                correctIndex = j.optInt("correct_index", -1),
-                correctText = j.optString("correct_text", ""),
-                bbox = bbox,
-                explanation = j.optString("explanation", "")
+                j.optString("question", ""),
+                j.optInt("correct_index", -1),
+                j.optString("correct_text", ""),
+                bbox,
+                j.optString("explanation", "")
             )
         } catch (e: Exception) {
             Result("", -1, "", null, "parse_error: ${e.message}")
