@@ -3,16 +3,17 @@ package com.sova.test
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.graphics.Rect
-import android.os.*
+import android.os.Build
+import android.os.IBinder
+import android.util.DisplayMetrics
 import android.view.*
-import android.view.WindowManager.LayoutParams as WMP
 import android.widget.*
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
-import java.text.SimpleDateFormat
-import java.util.*
+import android.view.WindowManager.LayoutParams as WMP
 
 class OverlayService : Service() {
 
@@ -23,9 +24,11 @@ class OverlayService : Service() {
     }
 
     private lateinit var wm: WindowManager
+
     private lateinit var panel: View
-    private lateinit var answerView: AnswerOverlayView
     private lateinit var panelParams: WMP
+
+    private lateinit var answerView: AnswerOverlayView
     private lateinit var answerParams: WMP
 
     private lateinit var btnToggle: Button
@@ -36,7 +39,7 @@ class OverlayService : Service() {
     private lateinit var resizeHandle: View
 
     private var scanning = false
-    private var miniBubble: ImageView? = null
+    private var miniBubble: View? = null
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var scanJob: Job? = null
@@ -49,27 +52,16 @@ class OverlayService : Service() {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         gemini = GeminiClient(getString(R.string.gemini_api_key))
         startInForeground()
-        buildPanel()
         buildAnswerLayer()
+        buildPanel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
+        if (intent?.action == ACTION_STOP) { stopSelf(); return START_NOT_STICKY }
         return START_STICKY
     }
 
-    override fun onDestroy() {
-        scope.cancel()
-        try { wm.removeView(panel) } catch (_: Exception) {}
-        try { wm.removeView(answerView) } catch (_: Exception) {}
-        miniBubble?.let { try { wm.removeView(it) } catch (_: Exception) {} }
-        super.onDestroy()
-    }
-
-    // ---------- FOREGROUND ----------
+    // ---------- Foreground ----------
     private fun startInForeground() {
         val nm = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -90,14 +82,28 @@ class OverlayService : Service() {
             .setOngoing(true)
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIF_ID, notif,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            )
-        } else startForeground(NOTIF_ID, notif)
+            startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIF_ID, notif)
+        }
     }
 
-    // ---------- PANEL ----------
+    // ---------- Answer layer (прозрачный слой с рамкой) ----------
+    private fun buildAnswerLayer() {
+        answerView = AnswerOverlayView(this)
+        answerParams = WMP(
+            WMP.MATCH_PARENT, WMP.MATCH_PARENT,
+            overlayType(),
+            WMP.FLAG_NOT_FOCUSABLE or
+                WMP.FLAG_NOT_TOUCHABLE or
+                WMP.FLAG_LAYOUT_IN_SCREEN or
+                WMP.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        )
+        wm.addView(answerView, answerParams)
+    }
+
+    // ---------- Panel ----------
     private fun buildPanel() {
         panel = LayoutInflater.from(this).inflate(R.layout.overlay_panel, null)
 
@@ -117,181 +123,132 @@ class OverlayService : Service() {
             gravity = Gravity.TOP or Gravity.START
             x = 40; y = 200
         }
-
         wm.addView(panel, panelParams)
 
         btnClose.setOnClickListener { stopSelf() }
         btnMin.setOnClickListener { minimize() }
         btnToggle.setOnClickListener { toggleScan() }
 
-        panel.setOnTouchListener(DragListener(panelParams) {
-            wm.updateViewLayout(panel, panelParams)
-        })
-
-        resizeHandle.setOnTouchListener(ResizeListener(panelParams) {
-            wm.updateViewLayout(panel, panelParams)
-        })
-
-        log("[готовий] натисни СКАНУВАТИ на сторінці тесту")
+        attachDrag(panel, panelParams)
+        attachResize(resizeHandle, panel, panelParams)
     }
 
-    private fun buildAnswerLayer() {
-        answerView = AnswerOverlayView(this)
-        answerParams = WMP(
-            WMP.MATCH_PARENT, WMP.MATCH_PARENT,
-            overlayType(),
-            WMP.FLAG_NOT_FOCUSABLE or
-                    WMP.FLAG_NOT_TOUCHABLE or
-                    WMP.FLAG_LAYOUT_IN_SCREEN or
-                    WMP.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP or Gravity.START; x = 0; y = 0 }
-        wm.addView(answerView, answerParams)
-    }
-
-    // ---------- ACTIONS ----------
-    private fun toggleScan() {
-        if (scanning) stopScan() else startScan()
-    }
-
-    private fun startScan() {
-        scanning = true
-        btnToggle.text = "■ СТОП"
-        btnToggle.backgroundTintList =
-            android.content.res.ColorStateList.valueOf(0xFFAA0000.toInt())
-        answerView.clear()
-        log("[скан] знімаю екран…")
-
-        scanJob = scope.launch {
-            try {
-                // Пауза: даём оверлею исчезнуть с кадра
-                answerView.visibility = View.INVISIBLE
-                panel.visibility = View.INVISIBLE
-                delay(300)
-
-                val cap = ScreenCaptureService.instance
-                val bmp = withContext(Dispatchers.IO) { cap?.grab() }
-
-                panel.visibility = View.VISIBLE
-                answerView.visibility = View.VISIBLE
-
-                if (bmp == null) { log("[помилка] нема кадру"); stopScan(); return@launch }
-
-                log("[скан] шлю в Gemini…")
-                val res = gemini!!.analyze(bmp)
-
-                if (res.correctIndex < 0) {
-                    log("[увага] ${res.explanation.ifEmpty { "не знайшов відповідь" }}")
-                } else {
-                    log("✅ №${res.correctIndex + 1}: ${res.correctText}")
-                    log("💬 ${res.explanation}")
-                    res.bbox?.let {
-                        answerView.show(
-                            Rect(it[0], it[1], it[0] + it[2], it[1] + it[3]),
-                            "№${res.correctIndex + 1}"
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                log("[err] ${e.message}")
-            } finally {
-                stopScan()
+    // ---------- Drag & Resize ----------
+    private fun attachDrag(view: View, lp: WMP) {
+        var startX = 0; var startY = 0
+        var touchX = 0f; var touchY = 0f
+        view.setOnTouchListener { v, e ->
+            // drag не запускаем если палец на кнопке
+            if (e.action == MotionEvent.ACTION_DOWN) {
+                val inButton = hitButton(e.rawX, e.rawY)
+                if (inButton) return@setOnTouchListener false
             }
-        }
-    }
-
-    private fun stopScan() {
-        scanning = false
-        scanJob?.cancel()
-        btnToggle.text = "● СКАНУВАТИ"
-        btnToggle.backgroundTintList =
-            android.content.res.ColorStateList.valueOf(0xFF00AA55.toInt())
-    }
-
-    private fun minimize() {
-        panel.visibility = View.GONE
-        answerView.clear()
-        if (miniBubble == null) {
-            miniBubble = ImageView(this).apply {
-                setImageResource(R.drawable.ic_owl)
-                setBackgroundColor(0xCC000000.toInt())
-                setPadding(16, 16, 16, 16)
-            }
-            val bp = WMP(
-                dp(56), dp(56),
-                overlayType(),
-                WMP.FLAG_NOT_FOCUSABLE or WMP.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT
-            ).apply { gravity = Gravity.TOP or Gravity.START; x = panelParams.x; y = panelParams.y }
-            wm.addView(miniBubble, bp)
-            miniBubble!!.setOnTouchListener(DragListener(bp) {
-                wm.updateViewLayout(miniBubble, bp)
-            })
-            miniBubble!!.setOnClickListener { restore() }
-        } else miniBubble!!.visibility = View.VISIBLE
-    }
-
-    private fun restore() {
-        miniBubble?.visibility = View.GONE
-        panel.visibility = View.VISIBLE
-    }
-
-    // ---------- HELPERS ----------
-    private fun log(msg: String) {
-        val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
-        logView.append("[$ts] $msg\n")
-        logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
-    }
-
-    private fun dp(v: Int): Int =
-        (v * resources.displayMetrics.density).toInt()
-
-    private fun overlayType(): Int =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            WMP.TYPE_APPLICATION_OVERLAY
-        else
-            @Suppress("DEPRECATION") WMP.TYPE_PHONE
-
-    // ---------- TOUCH ----------
-    private class DragListener(
-        private val p: WMP,
-        private val apply: () -> Unit
-    ) : View.OnTouchListener {
-        private var dx = 0; private var dy = 0
-        private var rx = 0f; private var ry = 0f
-        override fun onTouch(v: View, e: MotionEvent): Boolean {
-            when (e.action) {
-                MotionEvent.ACTION_DOWN -> { dx = p.x; dy = p.y; rx = e.rawX; ry = e.rawY }
-                MotionEvent.ACTION_MOVE -> {
-                    p.x = dx + (e.rawX - rx).toInt()
-                    p.y = dy + (e.rawY - ry).toInt()
-                    apply()
-                }
-            }
-            return false
-        }
-    }
-
-    private class ResizeListener(
-        private val p: WMP,
-        private val apply: () -> Unit
-    ) : View.OnTouchListener {
-        private var startW = 0; private var startH = 0
-        private var rx = 0f; private var ry = 0f
-        override fun onTouch(v: View, e: MotionEvent): Boolean {
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    startW = if (p.width > 0) p.width else v.rootView.width
-                    startH = if (p.height > 0) p.height else v.rootView.height
-                    rx = e.rawX; ry = e.rawY
+                    startX = lp.x; startY = lp.y
+                    touchX = e.rawX; touchY = e.rawY
+                    true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    p.width = (startW + (e.rawX - rx).toInt()).coerceAtLeast(200)
-                    p.height = (startH + (e.rawY - ry).toInt()).coerceAtLeast(150)
-                    apply()
+                    lp.x = startX + (e.rawX - touchX).toInt()
+                    lp.y = startY + (e.rawY - touchY).toInt()
+                    wm.updateViewLayout(panel, lp)
+                    true
                 }
+                else -> false
             }
-            return true
         }
     }
-}
+
+    private fun hitButton(rx: Float, ry: Float): Boolean {
+        for (b in listOf<View>(btnToggle, btnClose, btnMin)) {
+            val loc = IntArray(2); b.getLocationOnScreen(loc)
+            val r = Rect(loc[0], loc[1], loc[0] + b.width, loc[1] + b.height)
+            if (r.contains(rx.toInt(), ry.toInt())) return true
+        }
+        return false
+    }
+
+    private fun attachResize(handle: View, target: View, lp: WMP) {
+        var startW = 0; var startH = 0
+        var touchX = 0f; var touchY = 0f
+        handle.setOnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    startW = target.width
+                    startH = target.height
+                    touchX = e.rawX; touchY = e.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val nw = (startW + (e.rawX - touchX)).toInt().coerceAtLeast(dp(180))
+                    val nh = (startH + (e.rawY - touchY)).toInt().coerceAtLeast(dp(160))
+                    lp.width = nw
+                    lp.height = nh
+                    wm.updateViewLayout(panel, lp)
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    // ---------- Minimize ----------
+    private fun minimize() {
+        if (miniBubble != null) return
+        panel.visibility = View.GONE
+
+        val bubble = ImageView(this).apply {
+            setImageResource(R.drawable.ic_owl)
+            setBackgroundColor(0xCC000000.toInt())
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+        val lp = WMP(
+            dp(56), dp(56),
+            overlayType(),
+            WMP.FLAG_NOT_FOCUSABLE or WMP.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = panelParams.x; y = panelParams.y
+        }
+        wm.addView(bubble, lp)
+
+        var sx = 0; var sy = 0; var tx = 0f; var ty = 0f; var moved = false
+        bubble.setOnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    sx = lp.x; sy = lp.y; tx = e.rawX; ty = e.rawY; moved = false; true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    lp.x = sx + (e.rawX - tx).toInt()
+                    lp.y = sy + (e.rawY - ty).toInt()
+                    if (Math.abs(e.rawX - tx) > 10 || Math.abs(e.rawY - ty) > 10) moved = true
+                    wm.updateViewLayout(bubble, lp); true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!moved) {
+                        panelParams.x = lp.x; panelParams.y = lp.y
+                        wm.removeView(bubble); miniBubble = null
+                        panel.visibility = View.VISIBLE
+                        wm.updateViewLayout(panel, panelParams)
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+        miniBubble = bubble
+    }
+
+    // ---------- Scan loop ----------
+    private fun toggleScan() {
+        if (scanning) {
+            scanning = false
+            scanJob?.cancel()
+            btnToggle.text = "● СКАНУВАТИ"
+            btnToggle.setBackgroundColor(0xFF00AA55.toInt())
+            log("[стоп]")
+        } else {
+            scanning = true
+            btnToggle.text = "■ ЗУПИНИТ
