@@ -3,6 +3,7 @@ package com.sova.test
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
@@ -55,7 +56,9 @@ class ScreenCaptureService : Service() {
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } else startForeground(NOTIF_ID, n)
+        } else {
+            startForeground(NOTIF_ID, n)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -85,14 +88,16 @@ class ScreenCaptureService : Service() {
         )
     }
 
-    /** Захват одного кадра в Bitmap. Никуда не сохраняется — живёт только в памяти. */
+    fun screenWidth(): Int = width
+    fun screenHeight(): Int = height
+
+    /** Захват одного кадра в Bitmap. В галерею не пишется — живёт только в памяти процесса. */
     fun grab(): Bitmap? {
         val reader = imageReader ?: return null
         var image: Image? = null
         return try {
-            // Ждём свежий кадр (до ~500мс)
             val start = System.currentTimeMillis()
-            while (image == null && System.currentTimeMillis() - start < 500) {
+            while (image == null && System.currentTimeMillis() - start < 800) {
                 image = reader.acquireLatestImage()
                 if (image == null) Thread.sleep(30)
             }
@@ -102,23 +107,24 @@ class ScreenCaptureService : Service() {
             val pixelStride = plane.pixelStride
             val rowStride = plane.rowStride
             val rowPadding = rowStride - pixelStride * width
-            val bmp = Bitmap.createBitmap(
+            val full = Bitmap.createBitmap(
                 width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888
             )
-            bmp.copyPixelsFromBuffer(buffer)
-            Bitmap.createBitmap(bmp, 0, 0, width, height)
-        } catch (e: Exception) { null }
-        finally { image?.close() }
+            full.copyPixelsFromBuffer(buffer)
+            // Обрезаем паддинг справа
+            Bitmap.createBitmap(full, 0, 0, width, height)
+        } catch (e: Exception) {
+            null
+        } finally {
+            image?.close()
+        }
     }
 
-    fun screenWidth() = width
-    fun screenHeight() = height
-
     override fun onDestroy() {
+        super.onDestroy()
         virtualDisplay?.release()
         imageReader?.close()
         projection?.stop()
         instance = null
-        super.onDestroy()
     }
 }
