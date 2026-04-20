@@ -21,15 +21,15 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Grant gradlew exec
+      - name: Grant execute permission to gradlew
         run: |
-          chmod +x ./gradlew || true
+          if [ -f ./gradlew ]; then chmod +x ./gradlew; fi
 
-      - name: Generate gradle wrapper if missing
+      - name: Generate Gradle Wrapper (if missing)
         run: |
-          if [ ! -f gradlew ]; then
+          if [ ! -f ./gradlew ]; then
             gradle wrapper --gradle-version 8.5
-            chmod +x gradlew
+            chmod +x ./gradlew
           fi
 
       - name: Build debug APK
