@@ -7,11 +7,6 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.view.View
 
-/**
- * Прозрачный слой, который рисуется поверх Chrome.
- * Показывает красную рамку вокруг правильного ответа и подпись.
- * На касания НЕ реагирует (WindowManager.FLAG_NOT_TOUCHABLE на стороне сервиса).
- */
 class AnswerOverlayView(context: Context) : View(context) {
 
     private var box: Rect? = null
@@ -51,7 +46,6 @@ class AnswerOverlayView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         val r = box ?: return
-
         canvas.drawRect(r, glowPaint)
         canvas.drawRect(r, boxPaint)
 
